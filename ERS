@@ -1,0 +1,349 @@
+import numpy as np
+import librosa
+import matplotlib.pyplot as plt
+
+from pathlib import Path
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    accuracy_score
+)
+
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import (
+    Dense,
+    Dropout,
+    BatchNormalization
+)
+
+
+# -----------------------------------
+# 1. Dataset Path
+# -----------------------------------
+
+DATASET_PATH = Path("RAVDESS")
+
+
+# -----------------------------------
+# 2. Emotion Mapping
+# -----------------------------------
+
+emotions = {
+
+    1: "neutral",
+    2: "calm",
+    3: "happy",
+    4: "sad",
+    5: "angry",
+    6: "fearful",
+    7: "disgust",
+    8: "surprised"
+}
+
+
+# -----------------------------------
+# 3. Extract MFCC Features
+# -----------------------------------
+
+def extract_features(file_path):
+
+    audio, sample_rate = librosa.load(
+        file_path,
+        res_type="kaiser_fast"
+    )
+
+    mfcc = librosa.feature.mfcc(
+        y=audio,
+        sr=sample_rate,
+        n_mfcc=40
+    )
+
+    mfcc_mean = np.mean(
+        mfcc.T,
+        axis=0
+    )
+
+    mfcc_std = np.std(
+        mfcc.T,
+        axis=0
+    )
+
+    features = np.hstack(
+        [mfcc_mean, mfcc_std]
+    )
+
+    return features
+
+
+# -----------------------------------
+# 4. Load Audio Files
+# -----------------------------------
+
+features = []
+labels = []
+
+
+for file in DATASET_PATH.rglob("*.wav"):
+
+    parts = file.stem.split("-")
+
+    if len(parts) != 7:
+        continue
+
+    emotion_code = int(parts[2])
+
+    if emotion_code in emotions:
+
+        try:
+
+            feature = extract_features(file)
+
+            features.append(feature)
+
+            labels.append(
+                emotions[emotion_code]
+            )
+
+        except Exception as e:
+
+            print(
+                "Error:",
+                file,
+                e
+            )
+
+
+X = np.array(features)
+
+y_text = np.array(labels)
+
+
+print("Feature Shape:", X.shape)
+print("Number of Samples:", len(y_text))
+
+
+# -----------------------------------
+# 5. Encode Labels
+# -----------------------------------
+
+encoder = LabelEncoder()
+
+y = encoder.fit_transform(
+    y_text
+)
+
+
+# -----------------------------------
+# 6. Train-Test Split
+# -----------------------------------
+
+X_train, X_test, y_train, y_test = train_test_split(
+
+    X,
+    y,
+
+    test_size=0.2,
+
+    random_state=42,
+
+    stratify=y
+)
+
+
+# -----------------------------------
+# 7. Feature Scaling
+# -----------------------------------
+
+scaler = StandardScaler()
+
+X_train = scaler.fit_transform(
+    X_train
+)
+
+X_test = scaler.transform(
+    X_test
+)
+
+
+# -----------------------------------
+# 8. Build Neural Network
+# -----------------------------------
+
+model = Sequential([
+
+    Dense(
+        256,
+        activation="relu",
+        input_shape=(X_train.shape[1],)
+    ),
+
+    BatchNormalization(),
+
+    Dropout(0.3),
+
+    Dense(
+        128,
+        activation="relu"
+    ),
+
+    BatchNormalization(),
+
+    Dropout(0.3),
+
+    Dense(
+        64,
+        activation="relu"
+    ),
+
+    Dropout(0.2),
+
+    Dense(
+        len(encoder.classes_),
+        activation="softmax"
+    )
+])
+
+
+# -----------------------------------
+# 9. Compile Model
+# -----------------------------------
+
+model.compile(
+
+    optimizer="adam",
+
+    loss="sparse_categorical_crossentropy",
+
+    metrics=["accuracy"]
+)
+
+
+model.summary()
+
+
+# -----------------------------------
+# 10. Train Model
+# -----------------------------------
+
+history = model.fit(
+
+    X_train,
+    y_train,
+
+    validation_split=0.2,
+
+    epochs=50,
+
+    batch_size=32,
+
+    verbose=1
+)
+
+
+# -----------------------------------
+# 11. Evaluate
+# -----------------------------------
+
+loss, accuracy = model.evaluate(
+    X_test,
+    y_test,
+    verbose=0
+)
+
+print(
+    "\nTest Accuracy:",
+    accuracy
+)
+
+
+# -----------------------------------
+# 12. Predictions
+# -----------------------------------
+
+predictions = model.predict(
+    X_test
+)
+
+y_pred = np.argmax(
+    predictions,
+    axis=1
+)
+
+
+# -----------------------------------
+# 13. Classification Report
+# -----------------------------------
+
+print("\nClassification Report:")
+
+print(
+    classification_report(
+        y_test,
+        y_pred,
+        target_names=encoder.classes_
+    )
+)
+
+
+# -----------------------------------
+# 14. Confusion Matrix
+# -----------------------------------
+
+print("Confusion Matrix:")
+
+print(
+    confusion_matrix(
+        y_test,
+        y_pred
+    )
+)
+
+
+# -----------------------------------
+# 15. Training Graph
+# -----------------------------------
+
+plt.plot(
+    history.history["accuracy"],
+    label="Training Accuracy"
+)
+
+plt.plot(
+    history.history["val_accuracy"],
+    label="Validation Accuracy"
+)
+
+plt.xlabel("Epoch")
+
+plt.ylabel("Accuracy")
+
+plt.title(
+    "Speech Emotion Recognition"
+)
+
+plt.legend()
+
+plt.show()
+
+
+# -----------------------------------
+# 16. Save Model
+# -----------------------------------
+
+model.save(
+    "speech_emotion_model.keras"
+)
+
+np.save(
+    "emotion_classes.npy",
+    encoder.classes_
+)
+
+print(
+    "\nModel saved successfully!"
+)
